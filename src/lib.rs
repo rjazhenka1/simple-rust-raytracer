@@ -1,11 +1,10 @@
+pub mod color;
 pub mod objects;
 pub mod vec3;
-pub mod color;
+pub use color::Color;
 pub use image::Rgb;
 use objects::Light;
-pub use vec3::{Vec3, scalar};
-pub use color::Color; 
-
+pub use vec3::{reflect, scalar, Vec3, refract};
 
 pub struct Scene {
     objs: Vec<Box<dyn objects::Object>>,
@@ -15,22 +14,6 @@ pub struct Scene {
 }
 
 impl Scene {
-    pub fn new(fov: f64, bg: Color) -> Self {
-        Scene {
-            objs: vec![],
-            lights: vec![],
-            fov,
-            bg,
-        }
-    }
-    pub fn add_obj(&mut self, obj: Box<dyn objects::Object>) {
-        self.objs.push(obj);
-    }
-
-    pub fn add_light(&mut self, light: Light) {
-        self.lights.push(light);
-    }
-
     fn cast_single_ray(&self, origin: Vec3, dest: Vec3) -> Option<objects::Hit> {
         let mut closest: Option<objects::Hit> = None;
 
@@ -59,34 +42,75 @@ impl Scene {
 
         if let Some(hit) = self.cast_single_ray(origin, dir) {
             let mut diffuse_light_intensity = 0.0;
+            let mut specular_light_intensity = 0.0;
+
+            let reflect_dir = (reflect(&dir, &hit.normal_dir) + Vec3::random_in_unit_sphere() * hit.material.reflection_fuzziness).normalize();
+            let reflect_color = self.cast_ray(hit.point, reflect_dir, limit - 1);
+
             for light in &self.lights {
-                let light_dir = (light.position - hit.normal_origin).norm();
-                diffuse_light_intensity += f64::max(0.0, scalar(&hit.normal_dir, &light_dir)) * light.intensity;
-                return hit.material.color * diffuse_light_intensity;
+                let light_dir = (light.position - hit.point).normalize();
+                let light_dist = light_dir.norm();
+
+                if let Some(shadow_hit) = self.cast_single_ray(hit.point, light_dir) {
+                    if (shadow_hit.point - hit.point).norm() < light_dist {
+                        continue;
+                    }
+                }
+
+                diffuse_light_intensity +=
+                    f64::max(0.0, scalar(&hit.normal_dir, &light_dir)) * light.intensity;
+                specular_light_intensity += f64::powf(
+                    f64::max(
+                        0.0,
+                        scalar(&reflect(&light_dir, &hit.normal_dir).normalize(), &dir),
+                    ),
+                    hit.material.shininess * light.intensity,
+                );
             }
-            let diffuse_dir = hit.normal_origin + hit.normal_dir;
-            return self.cast_ray(hit.normal_origin, diffuse_dir, limit - 1) / 2.0;
+            return hit.material.color * diffuse_light_intensity * hit.material.diffuse_ratio
+                + Color(1.0, 1.0, 1.0) * specular_light_intensity * hit.material.specular_ratio
+                + reflect_color * hit.material.reflectiveness;
         }
 
         self.bg
     }
 
-    pub fn render(&self, width: u32, height: u32) -> image::RgbImage {
-        let mut img = image::RgbImage::new(width, height);
+    pub fn new(fov: f64, bg: Color) -> Self {
+        Scene {
+            objs: vec![],
+            lights: vec![],
+            fov,
+            bg,
+        }
+    }
+    pub fn add_obj(&mut self, obj: Box<dyn objects::Object>) {
+        self.objs.push(obj);
+    }
 
+    pub fn add_light(&mut self, light: Light) {
+        self.lights.push(light);
+    }
+
+    pub fn render(&self, width: u32, height: u32, max_it: u32, aa_passes: u32) -> image::RgbImage {
+        let mut img = image::RgbImage::new(width, height);
         for i in 0..width {
             for j in 0..height {
-                let horizontal = f64::tan(self.fov);
-                let vertical = f64::tan(self.fov) / width as f64 * height as f64;
+                let mut color = Color(0.0, 0.0, 0.0);
+                for _ in 0..aa_passes {
+                    let horizontal = f64::tan(self.fov);
+                    let vertical = f64::tan(self.fov) / width as f64 * height as f64;
 
-                let x = horizontal * (-1.0 + ((2 * i) as f64 / (width - 1) as f64));
-                let y = vertical * (-1.0 + ((2 * j) as f64 / (height - 1) as f64));
-                let z = -1.0;
+                    let x = horizontal
+                        * (-1.0 + (((2 * i) as f64 + fastrand::f64()) / (width - 1) as f64));
+                    let y = vertical
+                        * (-1.0 + (((2 * j) as f64 + fastrand::f64()) / (height - 1) as f64));
+                    let z = -1.0;
 
-                let origin = Vec3(0.0, 0.0, 0.0);
-                let dir = Vec3(x, y, z).norm();
-
-                img.put_pixel(i, j, self.cast_ray(origin, dir, 50).into())
+                    let origin = Vec3(0.0, 0.0, 0.0);
+                    let dir = Vec3(x, y, z).normalize();
+                    color = color + self.cast_ray(origin, dir, max_it);
+                }
+                img.put_pixel(i, j, (color / aa_passes as f64).into())
             }
         }
 
@@ -132,7 +156,7 @@ mod tests {
     #[test]
     fn test_vec3_norma() {
         let vec = Vec3(3.0, 0.0, 0.0);
-        assert_eq!(Vec3(1.0, 0.0, 0.0), vec.norm());
+        assert_eq!(Vec3(1.0, 0.0, 0.0), vec.normalize());
     }
 
     #[test]

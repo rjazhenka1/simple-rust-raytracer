@@ -7,9 +7,8 @@ use crate::{
 pub struct Hit<'a> {
     pub material: &'a Material,
     pub dist: f64,
-    pub normal_origin: Vec3,
+    pub point: Vec3,
     pub normal_dir: Vec3,
-    pub front_face: bool,
 }
 
 #[derive(Debug)]
@@ -21,6 +20,13 @@ pub struct Light {
 #[derive(Debug)]
 pub struct Material {
     pub color: Color,
+    pub specular_ratio: f64,
+    pub diffuse_ratio: f64,
+    pub shininess: f64,
+    pub reflectiveness: f64,
+    pub reflection_fuzziness: f64,
+    pub transparency: f64,
+    pub refractive_index: f64,
 }
 
 pub trait Object {
@@ -59,13 +65,12 @@ impl Object for Sphere {
         }
 
         let hit_point = *origin + *dir * root;
-        let normal = (hit_point - self.center / self.radius).norm();
+        let normal = (hit_point - self.center).normalize();
 
         Some(Hit {
             material: &self.material,
             dist: root,
-            normal_origin: hit_point,
-            front_face: scalar(dir, &normal) < 0.0,
+            point: hit_point,
             normal_dir: if scalar(dir, &normal) < 0.0 {
                 normal
             } else {
