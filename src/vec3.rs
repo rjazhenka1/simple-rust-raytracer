@@ -73,9 +73,19 @@ pub fn reflect(r: &Vec3, normal: &Vec3) -> Vec3 {
 }
 
 pub fn refract(i: &Vec3, normal: &Vec3, refractive_index: f64) -> Vec3 {
-    let cos = f64::clamp(scalar(i, normal), -1.0, 1.0);
-    let etai: f64;
-    let etat: f64;
-    let n: f64;
-    todo!();
+    let cos = f64::clamp(-scalar(i, normal), -1.0, 1.0);
+
+    if cos < 0.0 {
+        return refract(i, &-*normal, 1.0 / refractive_index);
+    }
+
+    let eta = 1.0 / refractive_index;
+
+    let k = 1.0 - (1.0 - cos * cos) * eta * eta;
+
+    if k < 0.0 {
+        return *normal;
+    }
+
+    *i * eta + *normal * (cos * eta - f64::sqrt(k))
 }

@@ -4,7 +4,7 @@ pub mod vec3;
 pub use color::Color;
 pub use image::Rgb;
 use objects::Light;
-pub use vec3::{reflect, scalar, Vec3, refract};
+pub use vec3::{reflect, refract, scalar, Vec3};
 
 pub struct Scene {
     objs: Vec<Box<dyn objects::Object>>,
@@ -35,6 +35,23 @@ impl Scene {
         closest
     }
 
+    fn light_passthrough(&self, origin: Vec3, dir: Vec3, limit: u32) -> f64 {
+        if limit == 0 {
+            return 0.0;
+        }
+
+        if let Some(hit) = self.cast_single_ray(origin, dir) {
+            let refract_dir = (refract(&dir, &hit.normal, hit.material.refractive_index)
+                + Vec3::random_in_unit_sphere() * hit.material.refraction_fuzziness)
+            .normalize();
+
+            return self.light_passthrough(hit.point, refract_dir, limit - 1)
+                * hit.material.transparency;
+        }
+
+        1.0
+    }
+
     fn cast_ray(&self, origin: Vec3, dir: Vec3, limit: u32) -> Color {
         if limit == 0 {
             return self.bg;
@@ -44,32 +61,45 @@ impl Scene {
             let mut diffuse_light_intensity = 0.0;
             let mut specular_light_intensity = 0.0;
 
-            let reflect_dir = (reflect(&dir, &hit.normal_dir) + Vec3::random_in_unit_sphere() * hit.material.reflection_fuzziness).normalize();
+            let reflect_dir = (reflect(&dir, &hit.normal)
+                + Vec3::random_in_unit_sphere() * hit.material.reflection_fuzziness)
+                .normalize();
             let reflect_color = self.cast_ray(hit.point, reflect_dir, limit - 1);
 
+            let refract_dir = (refract(&dir, &hit.normal, hit.material.refractive_index)
+                + Vec3::random_in_unit_sphere() * hit.material.refraction_fuzziness)
+                .normalize();
+            let refract_color = self.cast_ray(hit.point, refract_dir, limit - 1);
+
             for light in &self.lights {
-                let light_dir = (light.position - hit.point).normalize();
+                let light_dir = light.position - hit.point;
                 let light_dist = light_dir.norm();
+
+                let mut light_passthrough = 1.0;
 
                 if let Some(shadow_hit) = self.cast_single_ray(hit.point, light_dir) {
                     if (shadow_hit.point - hit.point).norm() < light_dist {
-                        continue;
+                        light_passthrough = self.light_passthrough(hit.point, light_dir, limit);
                     }
                 }
 
                 diffuse_light_intensity +=
-                    f64::max(0.0, scalar(&hit.normal_dir, &light_dir)) * light.intensity;
+                    f64::max(0.0, scalar(&hit.normal, &light_dir.normalize()))
+                        * light.intensity
+                        * light_passthrough;
                 specular_light_intensity += f64::powf(
                     f64::max(
                         0.0,
-                        scalar(&reflect(&light_dir, &hit.normal_dir).normalize(), &dir),
+                        scalar(&reflect(&light_dir, &hit.normal).normalize(), &dir),
                     ),
-                    hit.material.shininess * light.intensity,
-                );
+                    hit.material.shininess,
+                ) * light.intensity
+                    * light_passthrough;
             }
             return hit.material.color * diffuse_light_intensity * hit.material.diffuse_ratio
                 + Color(1.0, 1.0, 1.0) * specular_light_intensity * hit.material.specular_ratio
-                + reflect_color * hit.material.reflectiveness;
+                + reflect_color * hit.material.reflectiveness
+                + refract_color * hit.material.transparency;
         }
 
         self.bg
@@ -91,12 +121,12 @@ impl Scene {
         self.lights.push(light);
     }
 
-    pub fn render(&self, width: u32, height: u32, max_it: u32, aa_passes: u32) -> image::RgbImage {
+    pub fn render(&self, width: u32, height: u32, max_it: u32, aa_samples: u32) -> image::RgbImage {
         let mut img = image::RgbImage::new(width, height);
         for i in 0..width {
             for j in 0..height {
                 let mut color = Color(0.0, 0.0, 0.0);
-                for _ in 0..aa_passes {
+                for _ in 0..aa_samples {
                     let horizontal = f64::tan(self.fov);
                     let vertical = f64::tan(self.fov) / width as f64 * height as f64;
 
@@ -110,8 +140,9 @@ impl Scene {
                     let dir = Vec3(x, y, z).normalize();
                     color = color + self.cast_ray(origin, dir, max_it);
                 }
-                img.put_pixel(i, j, (color / aa_passes as f64).into())
+                img.put_pixel(i, j, (color / aa_samples as f64).into());
             }
+            println!("Progress: column {} of {}", i + 1, width);
         }
 
         img

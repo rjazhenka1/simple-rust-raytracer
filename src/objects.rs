@@ -8,7 +8,7 @@ pub struct Hit<'a> {
     pub material: &'a Material,
     pub dist: f64,
     pub point: Vec3,
-    pub normal_dir: Vec3,
+    pub normal: Vec3,
 }
 
 #[derive(Debug)]
@@ -27,6 +27,7 @@ pub struct Material {
     pub reflection_fuzziness: f64,
     pub transparency: f64,
     pub refractive_index: f64,
+    pub refraction_fuzziness: f64,
 }
 
 pub trait Object {
@@ -71,11 +72,41 @@ impl Object for Sphere {
             material: &self.material,
             dist: root,
             point: hit_point,
-            normal_dir: if scalar(dir, &normal) < 0.0 {
-                normal
+            normal,
+        })
+    }
+}
+
+#[derive(Debug)]
+pub struct Checkerboard {
+    pub y: f64,
+    pub cell_size: f64,
+    pub materials: (Material, Material),
+}
+
+impl Object for Checkerboard {
+    fn intersect(&self, origin: &Vec3, dir: &Vec3) -> Option<Hit> {
+        let dist = (self.y - origin.1) / dir.1;
+
+        if dist < 0.001 {
+            return None;
+        }
+
+        let hit_point = *origin + *dir * dist;
+        let normal = Vec3(0.0, -dir.1, 0.0).normalize();
+
+        let x_cell = f64::abs(f64::floor(hit_point.0 / self.cell_size) % 2.0) as u8;
+        let z_cell = f64::abs(f64::floor(hit_point.2 / self.cell_size) % 2.0) as u8;
+
+        Some(Hit {
+            material: if (x_cell + z_cell) % 2 == 0 {
+                &self.materials.0
             } else {
-                -normal
+                &self.materials.1
             },
+            dist,
+            point: hit_point,
+            normal,
         })
     }
 }
