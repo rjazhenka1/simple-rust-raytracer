@@ -2,9 +2,8 @@ pub mod color;
 pub mod objects;
 pub mod vec3;
 pub use color::Color;
-pub use image::Rgb;
-use objects::Light;
-pub use vec3::{reflect, refract, scalar, Vec3};
+pub use vec3::Vec3;
+use vec3::{reflect, refract, scalar};
 
 pub struct Scene {
     objs: Vec<Box<dyn objects::Object>>,
@@ -37,13 +36,13 @@ impl Scene {
 
     fn light_passthrough(&self, origin: Vec3, dir: Vec3, limit: u32) -> f64 {
         if limit == 0 {
-            return 0.0;
+            return 1.0;
         }
 
         if let Some(hit) = self.cast_single_ray(origin, dir) {
             let refract_dir = (refract(&dir, &hit.normal, hit.material.refractive_index)
                 + Vec3::random_in_unit_sphere() * hit.material.refraction_fuzziness)
-            .normalize();
+                .normalize();
 
             return self.light_passthrough(hit.point, refract_dir, limit - 1)
                 * hit.material.transparency;
@@ -79,7 +78,8 @@ impl Scene {
 
                 if let Some(shadow_hit) = self.cast_single_ray(hit.point, light_dir) {
                     if (shadow_hit.point - hit.point).norm() < light_dist {
-                        light_passthrough = self.light_passthrough(hit.point, light_dir, limit);
+                        light_passthrough =
+                            self.light_passthrough(hit.point, light_dir.normalize(), limit);
                     }
                 }
 
@@ -117,7 +117,7 @@ impl Scene {
         self.objs.push(obj);
     }
 
-    pub fn add_light(&mut self, light: Light) {
+    pub fn add_light(&mut self, light: objects::Light) {
         self.lights.push(light);
     }
 
